@@ -1,0 +1,58 @@
+{
+  "id": "substrateCommandCheck",
+  "name": "Substrate remote sandbox command check",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Run sandbox check",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18000/executions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "ate-target-actor", "value": "ax-system/n8n-sandbox-check"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"command\":\"id; test $(id -u) -eq 1000 && printf 'n8n-to-substrate-ok\\n' > /home/user/n8n-substrate-check.txt && cat /home/user/n8n-substrate-check.txt\",\"workdir\":\"/home/user\",\"timeout_ms\":10000}",
+        "options": {
+          "timeout": 30000,
+          "response": {"response": {"responseFormat": "text"}}
+        }
+      },
+      "id": "sandbox-command",
+      "name": "Execute command in remote sandbox",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const events = $input.first().json.data.trim().split('\\n').map(line => JSON.parse(line));\nconst failure = events.find(event => event.type === 'error');\nconst exit = events.find(event => event.type === 'exit');\nif (failure || !exit || exit.exit_code !== 0) throw new Error(failure?.error || 'Remote command did not exit successfully');\nconst stdout = events.filter(event => event.type === 'stdout').map(event => event.data).join('');\nif (!stdout.includes('uid=1000') || !stdout.includes('n8n-to-substrate-ok')) throw new Error('Sandbox user or command output did not match');\nreturn [{json: {success: true, stdout, exit_code: exit.exit_code}}];"
+      },
+      "id": "verify-command",
+      "name": "Verify command succeeded as UID 1000",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Run sandbox check": {
+      "main": [[{"node": "Execute command in remote sandbox", "type": "main", "index": 0}]]
+    },
+    "Execute command in remote sandbox": {
+      "main": [[{"node": "Verify command succeeded as UID 1000", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"}
+}

@@ -1,0 +1,29 @@
+# ActorTemplate is an Agent Substrate API resource, not a Kubernetes CRD.
+# Apply with `kubectl ate create actor-template -f -`.
+metadata:
+  atespace: n8n-sandboxes
+  name: n8n-sandbox
+workerSelector:
+  matchLabels:
+    workload: n8n-sandbox
+containers:
+- name: sandbox
+  # The control plane rejects images without a digest.
+  image: ${SUBSTRATE_SANDBOX_IMAGE}
+  wakeupProbe:
+    httpGet:
+      path: /healthz
+      port: 8081
+    timeoutSeconds: 30
+  securityContext:
+    capabilities:
+      drop:
+      - ALL
+resources:
+  limits:
+  - name: cpu
+    quantity: "1"
+  - name: memory
+    quantity: 2Gi
+snapshotConfig:
+  preferredFidelity: SNAPSHOT_FIDELITY_MEMORY

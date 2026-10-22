@@ -1,0 +1,79 @@
+# Agent Substrate actor image. The image is intentionally the same unprivileged
+# sandbox daemon used by the former self-hosted runners; Substrate supplies the
+# VM-grade isolation, lifecycle, routing, and state snapshots around it.
+FROM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
+
+WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY . .
+
+RUN groupadd --gid 1000 testuser && useradd --uid 1000 --gid 1000 --create-home testuser
+USER 1000:1000
+ENV GOCACHE=/tmp/go-cache
+RUN go test -race ./... && go vet ./...
+USER root
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/sandbox-daemon ./cmd/daemon
+
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+
+ARG TARGETARCH
+ARG NODE_VERSION=24.21.0
+ARG NODE_X64_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+ARG NODE_ARM64_SHA256=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+ARG TYPESCRIPT_VERSION=7.0.2
+ARG TYPESCRIPT_SHA512=8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    ca-certificates \
+    curl \
+    ripgrep \
+    wget \
+    xz-utils \
+    && arch="${TARGETARCH}" \
+    && if [ -z "$arch" ]; then \
+         case "$(uname -m)" in \
+           x86_64) arch=amd64 ;; \
+           aarch64) arch=arm64 ;; \
+           *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+         esac; \
+       fi \
+    && case "$arch" in \
+         amd64) node_arch=x64; node_sha="${NODE_X64_SHA256}" ;; \
+         arm64) node_arch=arm64; node_sha="${NODE_ARM64_SHA256}" ;; \
+         *) echo "unsupported TARGETARCH=${arch}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz \
+    && echo "${node_sha}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && npm pack --silent "typescript@${TYPESCRIPT_VERSION}" \
+    && node -e 'const crypto = require("crypto"); const fs = require("fs"); const actual = crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"); if (actual !== process.argv[2]) process.exit(1)' "typescript-${TYPESCRIPT_VERSION}.tgz" "${TYPESCRIPT_SHA512}" \
+    && npm install -g "typescript-${TYPESCRIPT_VERSION}.tgz" \
+    && rm "typescript-${TYPESCRIPT_VERSION}.tgz" \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1000 user && useradd --uid 1000 --gid 1000 --create-home --shell /bin/sh user \
+    && find / -xdev -perm /4000 -type f -exec chmod u-s {} +
+
+COPY --from=builder /out/sandbox-daemon /usr/local/bin/sandbox-daemon
+
+USER 1000:1000
+WORKDIR /home/user
+
+RUN python3 -m venv venv \
+    && venv/bin/pip install --no-cache-dir --quiet --upgrade pip \
+    && printf 'prefix=/home/user/.npm-global\n' > .npmrc \
+    && mkdir -p .npm-global/bin workspace/src workspace/chunks workspace/node-types
+
+COPY --chown=1000:1000 sandbox-workspace/ workspace/
+RUN cd workspace && npm ci --ignore-scripts
+
+EXPOSE 8081
+
+CMD ["/usr/local/bin/sandbox-daemon", "--listen-addr", ":8081"]

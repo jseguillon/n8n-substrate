@@ -1,0 +1,22 @@
+# Strategic merge patch for the Substrate atelet DaemonSet. This configures
+# Go's image-pull TLS client, not Talos/containerd's Kubernetes image pulls.
+# Create the harbor-registry-ca ConfigMap with the issuer CA before applying.
+spec:
+  template:
+    spec:
+      containers:
+      - name: atelet
+        env:
+        - name: SSL_CERT_DIR
+          value: /etc/ssl/certs:/run/registry-ca
+        volumeMounts:
+        - name: harbor-registry-ca
+          mountPath: /run/registry-ca
+          readOnly: true
+      volumes:
+      - name: harbor-registry-ca
+        configMap:
+          name: harbor-registry-ca
+          items:
+          - key: ca.crt
+            path: harbor-ca.crt

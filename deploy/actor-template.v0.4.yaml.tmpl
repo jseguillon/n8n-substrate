@@ -1,0 +1,45 @@
+# Compatibility manifest for the installed Substrate v0.4.0-alpha1 API.
+# Apply through the matching kubectl-ate plugin, not kubectl apply.
+metadata:
+  atespace: ax-system
+  name: n8n-sandbox-v04
+containers:
+- name: sandbox
+  image: ${SUBSTRATE_SANDBOX_IMAGE}
+  command:
+  - /bin/sh
+  - -c
+  - chmod 0755 / /dev && chmod 0666 /dev/null /dev/zero /dev/random /dev/urandom && chown -R 1000:1000 /home/user && exec /usr/local/bin/sandbox-daemon --listen-addr :80
+  # v0.4 starts OCI processes as root despite the image USER. The daemon
+  # immediately clears supplementary groups and drops to UID/GID 1000;
+  # these capabilities permit that startup-only transition. Paths and home
+  # ownership are normalized because v0.4's image cache unpacks as root.
+  securityContext:
+    capabilities:
+      drop:
+      - ALL
+      add:
+      - SETUID
+      - SETGID
+      - CHOWN
+  wakeupProbe:
+    httpGet:
+      path: /healthz
+      port: 80
+    timeoutSeconds: 30
+resources:
+  limits:
+  - name: cpu
+    quantity: "1"
+  - name: memory
+    quantity: 2Gi
+sandboxConfig:
+  configName: gvisor-default
+  sandboxClass: SANDBOX_CLASS_GVISOR
+snapshotConfig:
+  onCommit: SNAPSHOT_CONTENT_SCOPE_FULL
+  onPause: SNAPSHOT_CONTENT_SCOPE_FULL
+  storageLocation: s3://ate-snapshots/n8n/
+workerSelector:
+  matchLabels:
+    kagent.dev/worker-pool: sasa

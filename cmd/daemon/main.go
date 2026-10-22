@@ -1,0 +1,45 @@
+// Command daemon is the sandbox-daemon that runs inside every sandbox (container
+// or microVM) and serves exec and file operations to the runner.
+package main
+
+import (
+	"flag"
+	"log/slog"
+	"os"
+
+	"github.com/jseguillon/n8n-substrate/internal/daemon"
+	"github.com/jseguillon/n8n-substrate/internal/logging"
+)
+
+func main() {
+	listenAddr := flag.String("listen-addr", ":8081", "TCP address to listen on")
+	flag.Parse()
+
+	var logLevel slog.LevelVar
+	logLevel.Set(slog.LevelInfo)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel}))
+	slog.SetDefault(logger)
+
+	if v := os.Getenv("SANDBOX_DAEMON_LOG_LEVEL"); v != "" {
+		lvl, err := logging.ParseLevel(v)
+		if err != nil {
+			slog.Error("SANDBOX_DAEMON_LOG_LEVEL", "error", err)
+			os.Exit(1)
+		}
+		logLevel.Set(lvl)
+	}
+
+	if err := daemon.PrepareSandboxUser(); err != nil {
+		slog.Error("prepare sandbox user", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("daemon starting", "listen_addr", *listenAddr)
+
+	if err := daemon.Run(*listenAddr); err != nil {
+		slog.Error("daemon exited with error", "error", err)
+		os.Exit(1)
+	}
+
+	slog.Info("daemon stopped")
+}
